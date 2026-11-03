@@ -1,0 +1,46 @@
+name: AOSP17 Hardware Audio HIDL guard
+
+on:
+  pull_request:
+    branches:
+      - port/a17-hardware-interfaces-aosp17-base-20261103
+    paths:
+      - audio/core/all-versions/default/Device.cpp
+      - tests/host/test_audio_port_guard.py
+      - .github/workflows/aosp17-audio-port-guard.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aosp17-hardware-audio-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source-and-host-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download exact PR head sources without cloning hardware HAL repository
+        env:
+          REVISION: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in \
+            audio/core/all-versions/default/Device.cpp \
+            tests/host/test_audio_port_guard.py
+          do
+            mkdir -p "$(dirname "$path")"
+            curl --fail --silent --show-error --location --retry 4 \
+              "https://raw.githubusercontent.com/PixelExperience-Reborn/hardware_interfaces/$REVISION/$path" \
+              --output "$path"
+            test -s "$path"
+            echo "Fetched pinned source: $path"
+          done
+      - name: Compile actual getAudioPortImpl in C++17 host harness and run regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ --version | head -n 1
+          python3 -m unittest discover -s tests/host -p 'test_*.py' -v

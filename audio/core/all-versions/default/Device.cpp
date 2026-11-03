@@ -404,6 +404,13 @@ template <typename HalPort>
 Return<void> Device::getAudioPortImpl(const AudioPort& port, getAudioPort_cb _hidl_cb,
                                       int (*halGetter)(audio_hw_device_t*, HalPort*),
                                       const char* halGetterName) {
+    // Some legacy audio HALs do not implement this optional entry point.
+    // Report that the operation is unsupported rather than dereference a null function pointer.
+    if (halGetter == nullptr) {
+        _hidl_cb(Result::NOT_SUPPORTED, port);
+        return Void();
+    }
+
     HalPort halPort;
     if (status_t status = HidlUtils::audioPortToHal(port, &halPort); status != NO_ERROR) {
         _hidl_cb(analyzeStatus("audioPortToHal", status), port);

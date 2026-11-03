@@ -1,0 +1,73 @@
+name: Import verified AOSP17 hardware/interfaces release tree
+
+on:
+  push:
+    branches:
+      - port/a17-hardware-interfaces-import-20261103
+    paths:
+      - .github/workflows/aosp17-hardware-interfaces-import.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aosp17-hardware-interfaces-import
+  cancel-in-progress: false
+
+jobs:
+  import-exact-source-tree:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SOURCE_SHA: 0162af698935100a590b7359581ac8b1b80693e5
+      SOURCE_TREE: f5630c44a784efc32362ad4a8c51d9707f0e73a6
+      TARGET_BRANCH: port/a17-hardware-interfaces-aosp17-base-20261103
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Fetch official Android17 release and validate exact source commit/tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/aosp-hardware-interfaces"
+          cd "$RUNNER_TEMP/aosp-hardware-interfaces"
+          git init -q
+          git remote add aosp https://android.googlesource.com/platform/hardware/interfaces
+          git -c protocol.version=2 fetch --no-tags --depth=1 --filter=blob:none \
+            aosp refs/tags/android-17.0.0_r1
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_SHA"
+          test "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$SOURCE_TREE"
+          git cat-file -e "$SOURCE_TREE^{tree}"
+          echo "PASS: exact official AOSP17 commit $SOURCE_SHA, tree $SOURCE_TREE"
+
+      - name: Publish isolated exact-tree snapshot without rewriting old branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aosp-hardware-interfaces"
+          git remote add publish "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          ref="refs/heads/$TARGET_BRANCH"
+          existing="$(git ls-remote --heads publish "$ref" | cut -f1)"
+          if [ -n "$existing" ]; then
+            git -c protocol.version=2 fetch --no-tags --depth=1 --filter=blob:none publish "$ref"
+            actual="$(git rev-parse 'FETCH_HEAD^{tree}')"
+            test "$actual" = "$SOURCE_TREE" || {
+              echo "Target ref exists with mismatched source tree: $actual"
+              exit 1
+            }
+            echo "PASS: existing source snapshot $existing has exact AOSP17 tree"
+            exit 0
+          fi
+
+          export GIT_AUTHOR_NAME="PixelExperience-Reborn CI"
+          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          commit="$(printf 'hardware/interfaces: verified AOSP17 r1 exact-tree snapshot\n\nOriginal AOSP commit: %s\nOriginal AOSP tree: %s\nNo full upstream Git ancestry is claimed.\nHistorical PixelExperience seventeen is untouched.\n' \
+            "$SOURCE_SHA" "$SOURCE_TREE" | git commit-tree "$SOURCE_TREE")"
+          test "$(git rev-parse "$commit^{tree}")" = "$SOURCE_TREE"
+          # No forced ref update. A newly created ref is required.
+          git -c protocol.version=2 push --no-thin publish "$commit:$ref"
+          remote_commit="$(git ls-remote --heads publish "$ref" | cut -f1)"
+          test "$remote_commit" = "$commit"
+          echo "PASS: published snapshot $remote_commit with tree $SOURCE_TREE"
